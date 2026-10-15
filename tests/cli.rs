@@ -75,14 +75,13 @@ fn set_preserves_surrounding_bytes_for_every_size_and_byte_order() {
 }
 
 #[test]
-fn get_extracts_raw_bytes_for_every_size_and_byte_order() {
+fn get_extracts_raw_bytes_for_every_size() {
     let input = [0x99, 0x00, 0xff, 0x81, 0x42, 0x0a, 0x0d, 0xfe, 0x01, 0x77];
     for (size, width) in [("-b", 1), ("-w", 2), ("-d", 4), ("-q", 8)] {
-        for order in ["-L", "-B"] {
-            assert_success(&["-g", size, order, "1"], &input, &input[1..1 + width]);
-            assert_success(&["-g", size, order, "0"], &input[..width], &input[..width]);
-        }
+        assert_success(&["-g", size, "1"], &input, &input[1..1 + width]);
+        assert_success(&["-g", size, "0"], &input[..width], &input[..width]);
     }
+    assert_success(&["-gq", "0"], &input, &input[..8]);
 }
 
 #[test]
@@ -218,7 +217,14 @@ fn invalid_flag_combinations_and_missing_arguments_are_rejected() {
         &["-a", "-o", "-b", "0", "1"],
         &["-g", "-b", "-w", "0"],
         &["-g", "-d", "-q", "0"],
+        &["-g", "-b", "-L", "0"],
+        &["-g", "-b", "-B", "0"],
+        &["-L", "-gq", "0"],
+        &["-B", "-gq", "0"],
+        &["-gqL", "0"],
+        &["-gqB", "0"],
         &["-g", "-b", "-L", "-B", "0"],
+        &["-s", "-b", "-L", "-B", "0", "1"],
         &["-s", "-b", "0", "1", "2"],
     ];
     for args in cases {

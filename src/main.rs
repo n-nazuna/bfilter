@@ -24,8 +24,8 @@ struct Args {
     /// Replace the selected bytes
     #[arg(short = 's', group = "operation")]
     set: bool,
-    /// Extract the selected bytes unchanged
-    #[arg(short = 'g', group = "operation")]
+    /// Extract the selected bytes unchanged (cannot be used with -B or -L)
+    #[arg(short = 'g', group = "operation", conflicts_with = "endianness")]
     get: bool,
     /// Apply a bitwise AND mask
     #[arg(short = 'a', group = "operation")]
