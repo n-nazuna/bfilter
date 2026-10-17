@@ -11,6 +11,11 @@ use clap::Parser;
         .multiple(false),
 ))]
 #[command(group(
+    clap::ArgGroup::new("offset_size")
+        .required(false)
+        .multiple(false),
+))]
+#[command(group(
     clap::ArgGroup::new("endianness")
         .required(false)
         .multiple(false),
@@ -24,7 +29,7 @@ struct Args {
     /// Replace the selected bytes
     #[arg(short = 's', group = "operation")]
     set: bool,
-    /// Extract the selected bytes unchanged (cannot be used with -B or -L)
+    /// Extract the selected bytes unchanged (cannot be used with endianness options)
     #[arg(short = 'g', group = "operation", conflicts_with = "endianness")]
     get: bool,
     /// Apply a bitwise AND mask
@@ -35,10 +40,10 @@ struct Args {
     or: bool,
 
     /// Interpret values as big-endian
-    #[arg(short = 'B', group = "endianness")]
+    #[arg(long, group = "endianness")]
     big_endian: bool,
     /// Interpret values as little-endian (default)
-    #[arg(short = 'L', group = "endianness")]
+    #[arg(long, group = "endianness")]
     little_endian: bool,
 
     /// Select 1 byte
@@ -54,7 +59,20 @@ struct Args {
     #[arg(short = 'q', group = "size")]
     quad_word: bool,
 
-    /// Byte offset (decimal, 0x hexadecimal, or 0b binary)
+    /// Interpret OFFSET in units of 1 byte (default)
+    #[arg(short = 'B', group = "offset_size")]
+    byte_offset: bool,
+    /// Interpret OFFSET in units of 2 bytes
+    #[arg(short = 'W', group = "offset_size")]
+    word_offset: bool,
+    /// Interpret OFFSET in units of 4 bytes
+    #[arg(short = 'D', group = "offset_size")]
+    double_word_offset: bool,
+    /// Interpret OFFSET in units of 8 bytes
+    #[arg(short = 'Q', group = "offset_size")]
+    quad_word_offset: bool,
+
+    /// Offset in the selected units (decimal, 0x hexadecimal, or 0b binary)
     #[arg(required = true)]
     offset: String,
     /// Value or mask in the same integer formats as OFFSET
@@ -144,17 +162,25 @@ enum Size {
 
 impl Size {
     fn from_args(args: &Args) -> Result<Self> {
-        if args.byte {
-            Ok(Size::Byte)
-        } else if args.word {
-            Ok(Size::Word)
-        } else if args.double_word {
-            Ok(Size::DoubleWord)
-        } else if args.quad_word {
-            Ok(Size::QuadWord)
-        } else {
-            bail!("No size specified")
-        }
+        Self::from_flags([args.byte, args.word, args.double_word, args.quad_word])
+            .context("No size specified")
+    }
+
+    fn offset_unit_from_args(args: &Args) -> Self {
+        Self::from_flags([
+            args.byte_offset,
+            args.word_offset,
+            args.double_word_offset,
+            args.quad_word_offset,
+        ])
+        .unwrap_or(Self::Byte)
+    }
+
+    fn from_flags(flags: [bool; 4]) -> Option<Self> {
+        [Self::Byte, Self::Word, Self::DoubleWord, Self::QuadWord]
+            .into_iter()
+            .zip(flags)
+            .find_map(|(size, selected)| selected.then_some(size))
     }
 
     fn bytes(self) -> usize {
@@ -177,7 +203,10 @@ struct Filter {
 impl Filter {
     fn from_args(args: &Args) -> Result<Self> {
         let size = Size::from_args(args)?;
-        let offset = parse_integer(&args.offset, "offset")?;
+        let offset_unit = Size::offset_unit_from_args(args);
+        let offset = parse_integer(&args.offset, "offset")?
+            .checked_mul(offset_unit.bytes() as u64)
+            .context("Offset times unit exceeds the supported range")?;
         offset
             .checked_add(size.bytes() as u64)
             .context("Offset plus size exceeds the supported range")?;

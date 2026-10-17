@@ -59,12 +59,12 @@ fn set_preserves_surrounding_bytes_for_every_size_and_byte_order() {
         0x00, 0xff, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x0a,
     ];
     for &(size, value, little_endian) in cases {
-        for order in [None, Some("-L"), Some("-B")] {
+        for order in [None, Some("--little-endian"), Some("--big-endian")] {
             let mut args = vec!["-s", size];
             args.extend(order);
             args.extend(["0x2", value]);
             let mut field = little_endian.to_vec();
-            if order == Some("-B") {
+            if order == Some("--big-endian") {
                 field.reverse();
             }
             let mut expected = input;
@@ -85,6 +85,30 @@ fn get_extracts_raw_bytes_for_every_size() {
 }
 
 #[test]
+fn offset_units_are_independent_of_field_size_and_byte_order() {
+    let input: Vec<u8> = (0..32).collect();
+    for (unit_flag, unit) in [("-B", 1), ("-W", 2), ("-D", 4), ("-Q", 8)] {
+        let start = 2 * unit;
+        for (size, width) in [("-b", 1), ("-w", 2), ("-d", 4), ("-q", 8)] {
+            assert_success(
+                &["-g", size, unit_flag, "0b10"],
+                &input,
+                &input[start..start + width],
+            );
+        }
+        let mut expected = input.clone();
+        expected[start..start + 2].copy_from_slice(&[0x12, 0x34]);
+        assert_success(
+            &["-s", "-w", unit_flag, "--big-endian", "0x2", "0x1234"],
+            &input,
+            &expected,
+        );
+    }
+    assert_success(&["-gqB", "0"], &input, &input[..8]);
+    assert_success(&["-gqQ", "2"], &input, &input[16..24]);
+}
+
+#[test]
 fn masks_use_the_selected_size_and_byte_order() {
     let cases: &[(&str, &str, &[u8])] = &[
         ("-b", "0x0f", &[0x0f]),
@@ -98,9 +122,9 @@ fn masks_use_the_selected_size_and_byte_order() {
     ];
     let input = [0x99, 0xaa, 0x55, 0xf0, 0x0f, 0x12, 0x34, 0x56, 0x78, 0x88];
     for &(size, value, little_endian) in cases {
-        for order in ["-L", "-B"] {
+        for order in ["--little-endian", "--big-endian"] {
             let mut mask = little_endian.to_vec();
-            if order == "-B" {
+            if order == "--big-endian" {
                 mask.reverse();
             }
             for operation in ["-a", "-o"] {
@@ -153,12 +177,12 @@ fn mutations_extend_empty_input_and_gaps_with_zeros() {
 fn partial_fields_are_zero_filled_before_endian_conversion() {
     let input = [0x99, 0xab];
     for (operation, order, expected) in [
-        ("-s", "-L", [0x99, 0x34, 0x12]),
-        ("-s", "-B", [0x99, 0x12, 0x34]),
-        ("-a", "-L", [0x99, 0x20, 0x00]),
-        ("-a", "-B", [0x99, 0x02, 0x00]),
-        ("-o", "-L", [0x99, 0xbf, 0x12]),
-        ("-o", "-B", [0x99, 0xbb, 0x34]),
+        ("-s", "--little-endian", [0x99, 0x34, 0x12]),
+        ("-s", "--big-endian", [0x99, 0x12, 0x34]),
+        ("-a", "--little-endian", [0x99, 0x20, 0x00]),
+        ("-a", "--big-endian", [0x99, 0x02, 0x00]),
+        ("-o", "--little-endian", [0x99, 0xbf, 0x12]),
+        ("-o", "--big-endian", [0x99, 0xbb, 0x34]),
     ] {
         assert_success(&[operation, "-w", order, "1", "0x1234"], &input, &expected);
     }
@@ -172,7 +196,7 @@ fn maximum_values_fit_in_each_size() {
         ("-d", 4, "4294967295"),
         ("-q", 8, "18446744073709551615"),
     ] {
-        for order in ["-L", "-B"] {
+        for order in ["--little-endian", "--big-endian"] {
             for operation in ["-s", "-a", "-o"] {
                 assert_success(
                     &[operation, size, order, "0", maximum],
@@ -217,14 +241,18 @@ fn invalid_flag_combinations_and_missing_arguments_are_rejected() {
         &["-a", "-o", "-b", "0", "1"],
         &["-g", "-b", "-w", "0"],
         &["-g", "-d", "-q", "0"],
-        &["-g", "-b", "-L", "0"],
-        &["-g", "-b", "-B", "0"],
-        &["-L", "-gq", "0"],
-        &["-B", "-gq", "0"],
-        &["-gqL", "0"],
-        &["-gqB", "0"],
-        &["-g", "-b", "-L", "-B", "0"],
-        &["-s", "-b", "-L", "-B", "0", "1"],
+        &["-g", "-b", "--little-endian", "0"],
+        &["-g", "-b", "--big-endian", "0"],
+        &["--little-endian", "-gq", "0"],
+        &["--big-endian", "-gq", "0"],
+        &["-gq", "--little-endian", "0"],
+        &["-gq", "--big-endian", "0"],
+        &["-g", "-b", "--little-endian", "--big-endian", "0"],
+        &["-s", "-b", "--little-endian", "--big-endian", "0", "1"],
+        &["-g", "-b", "-B", "-W", "0"],
+        &["-g", "-b", "-W", "-D", "0"],
+        &["-g", "-b", "-D", "-Q", "0"],
+        &["-g", "-b", "-Q", "-B", "0"],
         &["-s", "-b", "0", "1", "2"],
     ];
     for args in cases {
@@ -269,6 +297,29 @@ fn offset_plus_size_overflow_is_rejected_before_processing_input() {
             &[],
             "Offset plus size",
         );
+    }
+}
+
+#[test]
+fn offset_scaling_checks_overflow_before_processing_input() {
+    for (unit_flag, unit) in [("-W", 2), ("-D", 4), ("-Q", 8)] {
+        let largest = (u64::MAX / unit).to_string();
+        let overflowing = (u64::MAX / unit + 1).to_string();
+        for operation in ["-g", "-s", "-a", "-o"] {
+            let mut args = vec![operation, "-b", unit_flag, overflowing.as_str()];
+            if operation != "-g" {
+                args.push("255");
+            }
+            assert_failure(&args, &[1, 2, 3], "Offset times unit");
+        }
+        // The largest valid product must reach the input-length check.
+        assert_failure(
+            &["-g", "-b", unit_flag, &largest],
+            &[],
+            "Input is too short",
+        );
+        // A valid product can still overflow when the field width is added.
+        assert_failure(&["-g", "-q", unit_flag, &largest], &[], "Offset plus size");
     }
 }
 
